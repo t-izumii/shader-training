@@ -2,13 +2,40 @@
 <html lang="ja">
 <head>
     <meta charset="utf-8">
-    <title>Three.js シェーダー練習</title>
+    <title>Day2 完成系 - 基本Sin波同心円</title>
     <style>
-        body { margin: 0; }
+        body { 
+            margin: 0; 
+            background: #000;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
         canvas { display: block; }
+        .info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .info h3 {
+            margin: 0 0 10px 0;
+            color: #fff;
+        }
+        .info p {
+            margin: 5px 0;
+            color: #ccc;
+        }
     </style>
 </head>
 <body>
+    <div class="info">
+        <h3>基本Sin波同心円</h3>
+        <p>sin(distance * frequency - time)</p>
+        <p>中心からの距離に基づいた波動パターン</p>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
         // シェーダーファイルを読み込む関数
@@ -52,7 +79,7 @@
             // アニメーション
             function animate() {
                 requestAnimationFrame(animate);
-                material.uniforms.uTime.value += 0.01;
+                material.uniforms.uTime.value += 0.016; // 60fps相当
                 renderer.render(scene, camera);
             }
             animate();
