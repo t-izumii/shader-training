@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>Three.js シェーダー練習</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.0/dist/lil-gui.umd.min.js"></script>
+    <script>
+        // シェーダーファイルを読み込む関数
+        async function loadShader(url) {
+            const response = await fetch(url);
+            return await response.text();
+        }
+
+        // メイン処理
+        async function init() {
+            // シェーダーコードを読み込む
+            const vertexShader = await loadShader('shader/vertex.glsl');
+            const fragmentShader = await loadShader('shader/fragment.glsl');
+
+            // シーン作成
+            const scene = new THREE.Scene();
+            
+            // カメラ作成
+            const perspective = 1000;
+            const fov = (180 * (2 * Math.atan(window.innerHeight / 2 / perspective))) / Math.PI;
+            const camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.1, perspective * 2);
+            camera.position.z = perspective;
+            // レンダラー作成
+            const renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // ジオメトリとマテリアルを作成
+            const geometry = new THREE.PlaneGeometry(600, 600, 128, 128);
+            const material = new THREE.ShaderMaterial({
+                vertexShader: vertexShader,
+                fragmentShader: fragmentShader,
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                    uBigWavesElevation: { value: 0.2 },
+                    uBigWavesFrequency: { value: new THREE.Vector2(0.05, 0.1) },
+                    uBigWavesSpeed: { value: 1.0 },
+                }
+            });
+
+            const gui = new lil.GUI();
+            gui.add(material.uniforms.uBigWavesElevation, 'value', -0.5, 1.0, 0.001);
+
+            const plane = new THREE.Mesh(geometry, material);
+            plane.rotation.x = -Math.PI / 4;
+            plane.rotation.z = -Math.PI / 2;
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            scene.add(plane);
+            // アニメーション
+            function animate() {
+                requestAnimationFrame(animate);
+                material.uniforms.uTime.value += 0.01;
+                renderer.render(scene, camera);
+            }
+            animate();
+
+            // ウィンドウリサイズ対応
+            window.addEventListener('resize', onWindowResize, false);
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                material.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+            }
+        }
+
+        // 初期化を実行
+        init();
+    </script>
+</body>
+</html>
