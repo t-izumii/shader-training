@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>GLSL 波紋エフェクト - Day 13</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: #000;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+            cursor: crosshair;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 14px;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .control-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            font-size: 12px;
+        }
+        input[type="range"] {
+            width: 100px;
+        }
+        input[type="checkbox"] {
+            margin-left: 5px;
+        }
+        button {
+            background: #333;
+            color: white;
+            border: 1px solid #666;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>波紋エフェクト (Ripple Effect)</h3>
+        <p>マウス移動で連続波紋生成</p>
+        <p>クリックで強い波紋</p>
+        <p>アクティブな波紋: <span id="rippleCount">0</span></p>
+    </div>
+
+    <div id="controls">
+        <div class="control-group">
+            <label>マウス追従:</label>
+            <input type="checkbox" id="mouseFollow" checked>
+            <span>有効</span>
+        </div>
+        <div class="control-group">
+            <label>追従間隔:</label>
+            <input type="range" id="followInterval" min="50" max="500" step="10" value="150">
+            <span id="followIntervalValue">150</span>ms
+        </div>
+        <div class="control-group">
+            <label>波の速度:</label>
+            <input type="range" id="speed" min="0.5" max="5.0" step="0.1" value="2.0">
+            <span id="speedValue">2.0</span>
+        </div>
+        <div class="control-group">
+            <label>波の密度:</label>
+            <input type="range" id="frequency" min="5" max="50" step="1" value="20">
+            <span id="frequencyValue">20</span>
+        </div>
+        <div class="control-group">
+            <label>波の強さ:</label>
+            <input type="range" id="amplitude" min="0.01" max="0.3" step="0.01" value="0.1">
+            <span id="amplitudeValue">0.1</span>
+        </div>
+        <div class="control-group">
+            <label>減衰率:</label>
+            <input type="range" id="damping" min="0.5" max="5.0" step="0.1" value="2.0">
+            <span id="dampingValue">2.0</span>
+        </div>
+        <div class="control-group">
+            <label>歪み強度:</label>
+            <input type="range" id="distortion" min="0.0" max="0.1" step="0.005" value="0.02">
+            <span id="distortionValue">0.02</span>
+        </div>
+        <div class="control-group">
+            <button id="clearRipples">波紋をクリア</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // 波紋の管理
+        const ripples = [];
+        const maxRipples = 20; // 連続表示のため増加
+
+        // マウス追従設定
+        let mouseFollowEnabled = true;
+        let followInterval = 150; // ミリ秒
+        let lastMouseRippleTime = 0;
+        let lastMousePosition = { x: 0.5, y: 0.5 };
+
+        // シェーダーファイルを読み込む関数
+        async function loadShader(url) {
+            const response = await fetch(url);
+            return await response.text();
+        }
+
+        // メイン処理
+        async function init() {
+            // シェーダーコードを読み込む
+            const vertexShader = await loadShader('shader/vertex.glsl');
+            const fragmentShader = await loadShader('shader/fragment.glsl');
+
+            // シーン作成
+            const scene = new THREE.Scene();
+            
+            // カメラ作成（正投影カメラを使用してピクセル完璧な座標系を作成）
+            const camera = new THREE.OrthographicCamera(
+                -window.innerWidth / 2,   // left
+                window.innerWidth / 2,    // right
+                window.innerHeight / 2,   // top
+                -window.innerHeight / 2,  // bottom
+                0.1,                      // near
+                1000                      // far
+            );
+            camera.position.z = 1;
+
+            // レンダラー作成
+            const renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // ジオメトリとマテリアルを作成（画面サイズと一致）
+            const geometry = new THREE.PlaneGeometry(window.innerWidth, window.innerHeight);
+            const material = new THREE.ShaderMaterial({
+                vertexShader: vertexShader,
+                fragmentShader: fragmentShader,
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                    uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+                    
+                    // 波紋パラメータ
+                    uSpeed: { value: 2.0 },
+                    uFrequency: { value: 20.0 },
+                    uAmplitude: { value: 0.1 },
+                    uDamping: { value: 2.0 },
+                    uDistortion: { value: 0.02 },
+                    
+                    // 波紋の配列（最大20個に増加）
+                    uRippleCount: { value: 0 },
+                    uRippleCenters: { value: new Array(maxRipples * 2).fill(0) },
+                    uRippleTimes: { value: new Array(maxRipples).fill(-999) },
+                    uRippleIntensities: { value: new Array(maxRipples).fill(0) }
+                }
+            });
+
+            const plane = new THREE.Mesh(geometry, material);
+            scene.add(plane);
+
+            // マウス座標変換関数
+            function screenToUV(clientX, clientY) {
+                const rect = renderer.domElement.getBoundingClientRect();
+                const x = (clientX - rect.left) / rect.width;
+                const y = 1.0 - (clientY - rect.top) / rect.height;  // Y軸を反転
+                return { x, y };
+            }
+
+            // マウスイベント
+            let mousePos = new THREE.Vector2(0.5, 0.5);
+            
+            function onMouseMove(event) {
+                const uv = screenToUV(event.clientX, event.clientY);
+                mousePos.x = uv.x;
+                mousePos.y = uv.y;
+                material.uniforms.uMouse.value = mousePos;
+
+                // マウス移動による自動波紋生成
+                if (mouseFollowEnabled) {
+                    const currentTime = performance.now();
+                    
+                    // 最後の波紋から十分時間が経過し、マウスが移動している場合
+                    if (currentTime - lastMouseRippleTime > followInterval) {
+                        const distance = Math.sqrt(
+                            Math.pow(uv.x - lastMousePosition.x, 2) + 
+                            Math.pow(uv.y - lastMousePosition.y, 2)
+                        );
+                        
+                        // マウスが一定距離以上移動した場合のみ波紋生成
+                        if (distance > 0.02) {
+                            addRipple(uv.x, uv.y, 0.5); // 通常より弱い波紋
+                            lastMouseRippleTime = currentTime;
+                            lastMousePosition = { x: uv.x, y: uv.y };
+                        }
+                    }
+                }
+            }
+
+            function onMouseClick(event) {
+                const uv = screenToUV(event.clientX, event.clientY);
+                addRipple(uv.x, uv.y, 1.2); // クリック時は強い波紋
+            }
+
+            // マウスが画面外に出た時の処理
+            function onMouseLeave() {
+                // 追従波紋を停止
+                lastMouseRippleTime = 0;
+            }
+
+            // イベントリスナー
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('click', onMouseClick);
+            window.addEventListener('mouseleave', onMouseLeave);
+
+            // 波紋を追加する関数
+            function addRipple(x, y, intensity = 1.0) {
+                const newRipple = {
+                    center: [x, y],
+                    startTime: material.uniforms.uTime.value,
+                    intensity: intensity
+                };
+
+                ripples.push(newRipple);
+
+                // 最大数を超えた場合は古いものを削除
+                if (ripples.length > maxRipples) {
+                    ripples.shift();
+                }
+
+                updateRippleUniforms();
+            }
+
+            // ユニフォームを更新
+            function updateRippleUniforms() {
+                const centers = new Array(maxRipples * 2).fill(0);
+                const times = new Array(maxRipples).fill(-999);
+                const intensities = new Array(maxRipples).fill(0);
+
+                for (let i = 0; i < Math.min(ripples.length, maxRipples); i++) {
+                    const ripple = ripples[i];
+                    centers[i * 2] = ripple.center[0];
+                    centers[i * 2 + 1] = ripple.center[1];
+                    times[i] = ripple.startTime;
+                    intensities[i] = ripple.intensity;
+                }
+
+                material.uniforms.uRippleCount.value = Math.min(ripples.length, maxRipples);
+                material.uniforms.uRippleCenters.value = centers;
+                material.uniforms.uRippleTimes.value = times;
+                material.uniforms.uRippleIntensities.value = intensities;
+                
+                document.getElementById('rippleCount').textContent = ripples.length;
+            }
+
+            // コントロールの設定
+            function setupControls() {
+                // マウス追従のオン/オフ
+                const mouseFollowCheckbox = document.getElementById('mouseFollow');
+                mouseFollowCheckbox.addEventListener('change', (e) => {
+                    mouseFollowEnabled = e.target.checked;
+                });
+
+                // 追従間隔の調整
+                const followIntervalSlider = document.getElementById('followInterval');
+                const followIntervalDisplay = document.getElementById('followIntervalValue');
+                followIntervalSlider.addEventListener('input', (e) => {
+                    followInterval = parseInt(e.target.value);
+                    followIntervalDisplay.textContent = followInterval;
+                });
+
+                // その他のパラメータ
+                const controls = [
+                    { id: 'speed', uniform: 'uSpeed' },
+                    { id: 'frequency', uniform: 'uFrequency' },
+                    { id: 'amplitude', uniform: 'uAmplitude' },
+                    { id: 'damping', uniform: 'uDamping' },
+                    { id: 'distortion', uniform: 'uDistortion' }
+                ];
+                
+                controls.forEach(control => {
+                    const slider = document.getElementById(control.id);
+                    const display = document.getElementById(control.id + 'Value');
+                    
+                    slider.addEventListener('input', (e) => {
+                        const value = parseFloat(e.target.value);
+                        display.textContent = value;
+                        material.uniforms[control.uniform].value = value;
+                    });
+                });
+
+                document.getElementById('clearRipples').addEventListener('click', () => {
+                    ripples.length = 0;
+                    updateRippleUniforms();
+                });
+            }
+
+            setupControls();
+
+            // 自動で波紋を生成（デモ用） - 無効化
+            let autoRippleTimer = 0;
+            const autoRippleInterval = 5.0; // 5秒間隔に延長
+
+            // アニメーション
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                const currentTime = performance.now() * 0.001;
+                material.uniforms.uTime.value = currentTime;
+
+                // 古い波紋を削除（3秒経過に短縮して流れるような効果）
+                for (let i = ripples.length - 1; i >= 0; i--) {
+                    if (currentTime - ripples[i].startTime > 3.0) {
+                        ripples.splice(i, 1);
+                    }
+                }
+
+                // 自動波紋生成を大幅に削減（マウス追従がメインのため）
+                autoRippleTimer += 0.016; // 約60fps
+                if (autoRippleTimer > autoRippleInterval && ripples.length < 3 && !mouseFollowEnabled) {
+                    const x = 0.2 + Math.random() * 0.6;
+                    const y = 0.2 + Math.random() * 0.6;
+                    addRipple(x, y, 0.8);
+                    autoRippleTimer = 0;
+                }
+
+                updateRippleUniforms();
+                renderer.render(scene, camera);
+            }
+            animate();
+
+            // ウィンドウリサイズ対応
+            window.addEventListener('resize', onWindowResize, false);
+            function onWindowResize() {
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                
+                // カメラの更新
+                camera.left = -width / 2;
+                camera.right = width / 2;
+                camera.top = height / 2;
+                camera.bottom = -height / 2;
+                camera.updateProjectionMatrix();
+                
+                // レンダラーの更新
+                renderer.setSize(width, height);
+                material.uniforms.uResolution.value.set(width, height);
+                
+                // ジオメトリのサイズも更新
+                plane.geometry.dispose();
+                plane.geometry = new THREE.PlaneGeometry(width, height);
+            }
+        }
+
+        // 初期化を実行
+        init();
+    </script>
+</body>
+</html>
